@@ -1,37 +1,21 @@
 // code inherited from https://github.com/gorilla/websocket/tree/master/examples/chat
-package main
+package ws
 
 import (
 	"bytes"
+	"encoding/json"
+	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		if r.Host == "localhost:3000" {
-			return true
-		}
-		return false
+		return true
 	},
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-}
-
-func main() {
-	log.Println("WS running at port 3000")
-	hub := newHub()
-	go hub.run()
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		serveWs(hub, w, r)
-	})
-	err := http.ListenAndServe(":3000", nil)
-	if err != nil {
-		log.Fatal("ListenAndServe: ", err)
-	}
 }
 
 // Hub maintains the set of active clients and broadcasts messages to the
@@ -48,18 +32,22 @@ type Hub struct {
 
 	// Unregister requests from clients.
 	unregister chan *Client
+
+	// Server name
+	name string
 }
 
-func newHub() *Hub {
+func NewHub(serverName string) *Hub {
 	return &Hub{
 		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]bool),
+		name:       serverName,
 	}
 }
 
-func (h *Hub) run() {
+func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.register:
@@ -136,7 +124,20 @@ func (c *Client) readPump() {
 			break
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		c.hub.broadcast <- message
+
+		// append from: serverName
+		m := make(map[string]string)
+		err = json.Unmarshal(message, &m)
+		if err != nil {
+			log.Println(err)
+		}
+		m["from"] = c.hub.name
+		b, err := json.Marshal(m)
+		if err != nil {
+			log.Println(err)
+		}
+
+		c.hub.broadcast <- b
 	}
 }
 
@@ -186,8 +187,8 @@ func (c *Client) writePump() {
 	}
 }
 
-// serveWs handles websocket requests from the peer.
-func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
+// ServeWs handles websocket requests from the peer.
+func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)

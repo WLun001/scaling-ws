@@ -1,6 +1,7 @@
 <template>
   <div id="app">
     <img alt="Vue logo" src="./assets/logo.png">
+    <p>Using Websocket {{ usingServer }}</p>
     <div v-if="status">
       <p>Websocket {{ status }}</p>
       <button v-if="status === 'connected'" v-on:click="callAPI">Call API</button>
@@ -20,16 +21,20 @@ export default {
   data() {
     return {
       wsMessages: [],
-      connection: null,
-      status: null,
+      connection: undefined,
+      status: undefined,
+      usingServer: 'server 1',
     }
   },
   created() {
+    const useServer2 = confirm('switch to ws sever 2');
+    this.usingServer = useServer2 ? 'server 2' : 'server 1';
     this.startWS();
   },
   methods: {
     startWS: function () {
-      this.connection = new WebSocket('ws://localhost:3000/ws');
+      const port = this.usingServer === 'server 1' ? 3000 : 4000;
+      this.connection = new WebSocket(`ws://localhost:${port}/ws`);
       this.connection.onmessage = event => {
         this.wsMessages.push(event.data)
       }

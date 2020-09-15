@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
+	"github.com/avast/retry-go"
 	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
@@ -10,27 +12,34 @@ import (
 )
 
 var conn *websocket.Conn
+var addr = flag.String("addr", ":8081", "http service address")
+var wsAddr = flag.String("wsAddr", "localhost:3000", "ws service address")
 
 func main() {
-	log.Println("API running at port 8081")
+	flag.Parse()
+	log.Printf("API running at port %s", *addr)
 	http.HandleFunc("/", echo)
 
-	c, err := connectWS()
-	if err != nil {
-		log.Fatal("unable to connect to ws")
-	}
-	conn = c
+	err := retry.Do(func() error {
+		c, err := connectWS()
+		if err != nil {
+			log.Println("attempting to connect to ws")
+			return err
+		}
+		conn = c
+		return nil
+	})
 	defer conn.Close()
 
-	err = http.ListenAndServe(":8081", nil)
+	err = http.ListenAndServe(*addr, nil)
 	if err != nil {
-		log.Fatal("ListenAndServe: ", err)
+		log.Fatal(err)
 	}
 
 }
 
 func connectWS() (*websocket.Conn, error) {
-	u := url.URL{Scheme: "ws", Host: "localhost:3000", Path: "/ws"}
+	u := url.URL{Scheme: "ws", Host: *wsAddr, Path: "/ws"}
 	log.Printf("connecting ws at %s", u.String())
 
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
