@@ -64,6 +64,7 @@ func (h *Hub) Run() {
 				select {
 				case client.send <- message:
 				default:
+					log.Println("default")
 					close(client.send)
 					delete(h.clients, client)
 				}
@@ -113,7 +114,7 @@ func (c *Client) readPump() {
 		c.conn.Close()
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	//c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error { c.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 	for {
 		_, message, err := c.conn.ReadMessage()
@@ -158,6 +159,7 @@ func (c *Client) writePump() {
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
+				log.Println("closing")
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}

@@ -7,7 +7,7 @@
       <button v-if="status === 'connected'" v-on:click="callAPI">Call API</button>
     </div>
     <div v-if="wsMessages.length">
-      <p>Result from API:</p>
+      <p>Result from API: ({{ wsMessages.length }})</p>
       <p v-for="(message, index) in wsMessages" v-bind:key="index">{{ index }} - {{ message }}</p>
     </div>
   </div>
