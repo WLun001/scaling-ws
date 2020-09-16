@@ -2,22 +2,20 @@ package main
 
 import (
 	"flag"
-	"github.com/avast/retry-go"
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+	"github.com/nats-io/nats.go"
 	"log"
-	"net/url"
 	"scaling-ws/internal/ws"
 	"time"
 )
 
 var addr = flag.String("addr", ":3000", "api service address")
-var wsAddr = flag.String("wsAddr", "localhost:4000", "ws service address")
-var skipWs = flag.Bool("skipWs", false, "skip ws setup")
+var isNatsPublisher = flag.Bool("natsPublisher", true, "is nats publisher")
 
-var conn *websocket.Conn
+const subject = "com.scaling-ws.updates"
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}
@@ -35,31 +33,30 @@ func run() error {
 	hub := ws.NewHub(serverName)
 	go hub.Run()
 
-	if !*skipWs {
-		err := retry.Do(func() error {
-			c, err := connectWS()
-			if err != nil {
-				log.Println("attempting to connect to ws")
-				return err
-			}
-			conn = c
-			return nil
-		})
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer conn.Close()
+	nc, err := nats.Connect(nats.DefaultURL)
+	if err != nil {
+		log.Fatal(err)
 	}
+	ec, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer ec.Close()
+	defer nc.Close()
 
 	r := gin.Default()
 	r.GET("/ws", func(c *gin.Context) {
-		ws.ServeWs(hub, c, nil)
+		ws.ServeWs(hub, c, nc, subject)
 	})
 
 	r.POST("/ping", func(c *gin.Context) {
-		// send to ws
-		if !*skipWs {
-			conn.WriteJSON(map[string]string{"sendTime": time.Now().Format(time.ANSIC)})
+		// publish to nats
+		if *isNatsPublisher {
+			message := map[string]string{"sendTime": time.Now().Format(time.ANSIC)}
+			if err := ec.Publish(subject, message); err != nil {
+				log.Fatal(err)
+			}
 		}
 
 		c.JSON(200, gin.H{
@@ -67,16 +64,4 @@ func run() error {
 		})
 	})
 	return r.Run(*addr)
-}
-
-func connectWS() (*websocket.Conn, error) {
-	u := url.URL{Scheme: "ws", Host: *wsAddr, Path: "/ws"}
-	log.Printf("connecting ws at %s", u.String())
-
-	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	log.Println("Connected to WS")
-	return c, nil
 }

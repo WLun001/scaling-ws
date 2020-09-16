@@ -6,7 +6,6 @@
       <p>Websocket {{ status }}</p>
       <div v-if="status === 'connected'">
         <button v-on:click="callAPI">Call API</button>
-<!--        <button v-on:click="callAPIWithNats">Call API With NATs</button>-->
       </div>
     </div>
     <div v-if="wsMessages.length">
@@ -58,9 +57,6 @@ export default {
     callAPI: function () {
       axios.post('http://localhost:3000/ping');
     },
-    callAPIWithNats: function () {
-      axios.post('http://localhost:3000/echoWithNATS');
-    }
   }
 }
 </script>

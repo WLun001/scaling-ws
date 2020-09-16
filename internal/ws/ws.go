@@ -4,6 +4,7 @@ package ws
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/nats-io/nats.go"
@@ -69,6 +70,10 @@ func (h *Hub) Run() {
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.send)
+				if client.natsSub != nil {
+					client.natsSub.Unsubscribe()
+					log.Println("unsubscribe")
+				}
 			}
 			log.Printf("Current connected ws client: %d", len(h.clients))
 		case message := <-h.broadcast:
@@ -113,6 +118,8 @@ type Client struct {
 
 	// Buffered channel of outbound messages.
 	send chan []byte
+
+	natsSub *nats.Subscription
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -190,6 +197,9 @@ func (c *Client) writePump() {
 }
 
 func (c *Client) attachServerName(input []byte) ([]byte, error) {
+	if len(input) <= 0 {
+		return nil, errors.New("empty message")
+	}
 	m := make(map[string]string)
 	err := json.Unmarshal(input, &m)
 	if err != nil {
@@ -204,13 +214,30 @@ func (c *Client) attachServerName(input []byte) ([]byte, error) {
 }
 
 // ServeWs handles websocket requests from the peer.
-func ServeWs(hub *Hub, c *gin.Context, nc *nats.Conn) {
+func ServeWs(hub *Hub, c *gin.Context, nc *nats.Conn, subject string) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
+
 	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256)}
+
+	// subscribe nats
+	sub, err := nc.Subscribe(subject, func(m *nats.Msg) {
+		log.Println(string(m.Data))
+		client.hub.broadcast <- m.Data
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	nc.Flush()
+
+	if err := nc.LastError(); err != nil {
+		log.Fatal(err)
+	}
+
+	client.natsSub = sub
 	client.hub.register <- client
 
 	// Allow collection of memory referenced by the caller by doing all work in
@@ -218,18 +245,4 @@ func ServeWs(hub *Hub, c *gin.Context, nc *nats.Conn) {
 	go client.writePump()
 	go client.readPump()
 
-	//// Use a WaitGroup to wait for a message to arrive
-	//wg := sync.WaitGroup{}
-	//wg.Add(1)
-	//
-	//// Subscribe
-	//if _, err := nc.Subscribe("signal", func(m *nats.Msg) {
-	//	client.hub.broadcast <- m.Data
-	//	wg.Done()
-	//}); err != nil {
-	//	log.Fatal(err)
-	//}
-	//
-	//// Wait for a message to come in
-	//wg.Wait()
 }
