@@ -4,15 +4,27 @@ package ws
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/nats-io/nats.go"
 	"log"
 	"net/http"
 	"time"
 )
 
+var allowOrigins = map[string]bool{"http://localhost:8080": true}
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		allow, ok := allowOrigins[origin]
+		if ok && allow {
+			return true
+		}
+		return false
 	},
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
@@ -125,20 +137,7 @@ func (c *Client) readPump() {
 			break
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-
-		// append from: serverName
-		m := make(map[string]string)
-		err = json.Unmarshal(message, &m)
-		if err != nil {
-			log.Println(err)
-		}
-		m["from"] = c.hub.name
-		b, err := json.Marshal(m)
-		if err != nil {
-			log.Println(err)
-		}
-
-		c.hub.broadcast <- b
+		c.hub.broadcast <- message
 	}
 }
 
@@ -155,7 +154,8 @@ func (c *Client) writePump() {
 	}()
 	for {
 		select {
-		case message, ok := <-c.send:
+		case m, ok := <-c.send:
+			message, _ := c.attachServerName(m)
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
@@ -189,9 +189,23 @@ func (c *Client) writePump() {
 	}
 }
 
+func (c *Client) attachServerName(input []byte) ([]byte, error) {
+	m := make(map[string]string)
+	err := json.Unmarshal(input, &m)
+	if err != nil {
+		log.Println(err)
+	}
+	m["from"] = c.hub.name
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
 // ServeWs handles websocket requests from the peer.
-func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+func ServeWs(hub *Hub, c *gin.Context, nc *nats.Conn) {
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Println(err)
 		return
@@ -203,4 +217,19 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	// new goroutines.
 	go client.writePump()
 	go client.readPump()
+
+	//// Use a WaitGroup to wait for a message to arrive
+	//wg := sync.WaitGroup{}
+	//wg.Add(1)
+	//
+	//// Subscribe
+	//if _, err := nc.Subscribe("signal", func(m *nats.Msg) {
+	//	client.hub.broadcast <- m.Data
+	//	wg.Done()
+	//}); err != nil {
+	//	log.Fatal(err)
+	//}
+	//
+	//// Wait for a message to come in
+	//wg.Wait()
 }
