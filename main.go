@@ -42,12 +42,28 @@ func run() error {
 		log.Fatal(err)
 	}
 
+	natsSub := make(chan []byte)
+	// subscribe nats
+	sub, err := nc.Subscribe(subject, func(m *nats.Msg) {
+		log.Println(string(m.Data))
+		natsSub <- m.Data
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	nc.Flush()
+
+	if err := nc.LastError(); err != nil {
+		log.Fatal(err)
+	}
+	defer sub.Unsubscribe()
+
 	defer ec.Close()
 	defer nc.Close()
 
 	r := gin.Default()
 	r.GET("/ws", func(c *gin.Context) {
-		ws.ServeWs(hub, c, nc, subject)
+		ws.ServeWs(hub, c, natsSub)
 	})
 
 	r.POST("/ping", func(c *gin.Context) {

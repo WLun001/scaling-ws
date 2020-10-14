@@ -7,7 +7,6 @@ import (
 	"errors"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/nats-io/nats.go"
 	"log"
 	"net/http"
 	"time"
@@ -70,10 +69,6 @@ func (h *Hub) Run() {
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.send)
-				if client.natsSub != nil {
-					client.natsSub.Unsubscribe()
-					log.Println("unsubscribe")
-				}
 			}
 			log.Printf("Current connected ws client: %d", len(h.clients))
 		case message := <-h.broadcast:
@@ -119,7 +114,7 @@ type Client struct {
 	// Buffered channel of outbound messages.
 	send chan []byte
 
-	natsSub *nats.Subscription
+	natsSub chan []byte
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -196,6 +191,15 @@ func (c *Client) writePump() {
 	}
 }
 
+func (c *Client) listenNats() {
+	for {
+		select {
+		case msg := <-c.natsSub:
+			c.hub.broadcast <- msg
+		}
+	}
+}
+
 func (c *Client) attachServerName(input []byte) ([]byte, error) {
 	if len(input) <= 0 {
 		return nil, errors.New("empty message")
@@ -214,7 +218,7 @@ func (c *Client) attachServerName(input []byte) ([]byte, error) {
 }
 
 // ServeWs handles websocket requests from the peer.
-func ServeWs(hub *Hub, c *gin.Context, nc *nats.Conn, subject string) {
+func ServeWs(hub *Hub, c *gin.Context, natsSub chan []byte) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Println(err)
@@ -223,25 +227,12 @@ func ServeWs(hub *Hub, c *gin.Context, nc *nats.Conn, subject string) {
 
 	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256)}
 
-	// subscribe nats
-	sub, err := nc.Subscribe(subject, func(m *nats.Msg) {
-		log.Println(string(m.Data))
-		client.hub.broadcast <- m.Data
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	nc.Flush()
-
-	if err := nc.LastError(); err != nil {
-		log.Fatal(err)
-	}
-
-	client.natsSub = sub
+	client.natsSub = natsSub
 	client.hub.register <- client
 
 	// Allow collection of memory referenced by the caller by doing all work in
 	// new goroutines.
+	go client.listenNats()
 	go client.writePump()
 	go client.readPump()
 
