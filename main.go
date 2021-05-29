@@ -2,15 +2,14 @@ package main
 
 import (
 	"flag"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/nats-io/nats.go"
 	"log"
-	"scaling-ws/internal/ws"
 	"time"
 )
 
 var addr = flag.String("addr", ":3000", "api service address")
-var isNatsPublisher = flag.Bool("natsPublisher", true, "is nats publisher")
 
 const subject = "com.scaling-ws.updates"
 
@@ -24,15 +23,6 @@ func main() {
 func run() error {
 	flag.Parse()
 
-	var serverName string
-	if *addr == ":3000" {
-		serverName = "server 1"
-	} else {
-		serverName = "server 2"
-	}
-	hub := ws.NewHub(serverName)
-	go hub.Run()
-
 	nc, err := nats.Connect(nats.DefaultURL)
 	if err != nil {
 		log.Fatal(err)
@@ -42,37 +32,26 @@ func run() error {
 		log.Fatal(err)
 	}
 
-	natsSub := make(chan []byte)
-	// subscribe nats
-	sub, err := nc.Subscribe(subject, func(m *nats.Msg) {
-		log.Println(string(m.Data))
-		natsSub <- m.Data
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	nc.Flush()
-
 	if err := nc.LastError(); err != nil {
 		log.Fatal(err)
 	}
-	defer sub.Unsubscribe()
 
 	defer ec.Close()
 	defer nc.Close()
 
 	r := gin.Default()
-	r.GET("/ws", func(c *gin.Context) {
-		ws.ServeWs(hub, c, natsSub)
-	})
+
+	r.Use(cors.New(cors.Config{
+		AllowOrigins: []string{"http://localhost:8080"},
+		AllowMethods: []string{"*"},
+		AllowHeaders: []string{"*"},
+	}))
 
 	r.POST("/ping", func(c *gin.Context) {
 		// publish to nats
-		if *isNatsPublisher {
-			message := map[string]string{"sendTime": time.Now().Format(time.ANSIC)}
-			if err := ec.Publish(subject, message); err != nil {
-				log.Fatal(err)
-			}
+		message := map[string]string{"sendTime": time.Now().Format(time.ANSIC)}
+		if err := ec.Publish(subject, message); err != nil {
+			log.Fatal(err)
 		}
 
 		c.JSON(200, gin.H{

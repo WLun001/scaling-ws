@@ -1,58 +1,45 @@
 <template>
   <div id="app">
     <img alt="Vue logo" src="./assets/logo.png">
-    <p>Using Websocket {{ usingServer }}</p>
-    <div v-if="status">
-      <p>Websocket {{ status }}</p>
-      <div v-if="status === 'connected'">
-        <button v-on:click="callAPI">Call API</button>
-      </div>
-    </div>
-    <div v-if="wsMessages.length">
-      <p>Result from API: ({{ wsMessages.length }})</p>
-      <p v-for="(message, index) in wsMessages" v-bind:key="index">{{ index }} - {{ message }}</p>
+    <p>NATS server {{ this.server }}</p>
+    <button v-on:click="callAPI">Call API</button>
+    <div v-if="messages.length">
+      <p>Result from API: ({{ messages.length }})</p>
+      <p v-for="(message, index) in messages" v-bind:key="index">{{ index }} - {{ message }}</p>
     </div>
   </div>
 </template>
 
 <script>
 import axios from 'axios'
+import { connect, StringCodec } from 'nats.ws/nats.cjs'
 
 export default {
   name: 'App',
   data() {
     return {
-      wsMessages: [],
+      messages: [],
       connection: undefined,
       status: undefined,
-      usingServer: 'server 1',
+      server: 'ws://127.0.0.1:5000',
     }
   },
   created() {
-    const useServer2 = confirm('switch to ws sever 2');
-    this.usingServer = useServer2 ? 'server 2' : 'server 1';
-    this.startWS();
+    void this.connectToNATS();
   },
   methods: {
-    startWS: function () {
-      const port = this.usingServer === 'server 1' ? 3000 : 4000;
-      this.connection = new WebSocket(`ws://localhost:${port}/ws`);
-      this.connection.onmessage = event => {
-        this.wsMessages.push(event.data)
-      }
-
-      this.connection.onopen = () => {
-        this.status = 'connected';
-      }
-
-      this.connection.onerror = () => {
-        this.status = 'error';
-      }
-
-      this.connection.onclose = () => {
-        this.status = 'disconnected';
-        setTimeout(() => this.startWS(), 1000)
-      }
+    connectToNATS: async function () {
+      const nc = await connect({servers: this.server});
+      console.log(nc.status());
+      const sc = StringCodec();
+      const sub = nc.subscribe('com.scaling-ws.updates')
+      void await (async () => {
+        for await (const m of sub) {
+          this.messages.push(sc.decode(m.data));
+          console.log(`[${sub.getProcessed()}]: ${sc.decode(m.data)}`);
+        }
+        console.log("subscription closed");
+      })();
     },
     callAPI: function () {
       axios.post('http://localhost:3000/ping');
